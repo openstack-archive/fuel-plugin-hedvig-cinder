@@ -1,0 +1,11 @@
+# These tasks will be merged into deployment graph. Here you
+# can specify new tasks for any roles, even built-in ones.
+
+- id: hedvig-cinder
+  type: puppet
+  role: ['cinder']
+  stage: post_deployment
+  parameters:
+    puppet_manifest: puppet/manifests/controller.pp
+    puppet_modules:  "puppet/modules/:/etc/puppet/modules/"
+    timeout: 360
