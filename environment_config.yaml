@@ -1,0 +1,16 @@
+attributes: 
+  multibackend: 
+    value: 'true'
+    label: 'Multi-backend enabled' 
+    description: 'Hedvig will be used in a multi-backend environment' 
+    weight: 10 
+    type: "checkbox" 
+  hedvig_metadata_server: 
+    value: '' 
+    label: 'Hedvig cluster node(s)' 
+    description: 'Comma separated list of hostname (or IP address) for Hedvig cluster node(s)' 
+    weight: 20 
+    type: "text"
+    regex:
+      source: '\S'
+      error: "This field cannot be empty"
