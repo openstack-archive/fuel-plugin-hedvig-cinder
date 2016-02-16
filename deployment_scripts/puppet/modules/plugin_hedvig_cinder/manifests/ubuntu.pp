@@ -1,10 +1,5 @@
 class plugin_hedvig_cinder::ubuntu
 {
-    $services = ['cinder-volume']
-
-    $metadata_server = $plugin_settings['hedvig_metadata_server']
-    $volume_type = "hedvig"
-
     file { "/usr/lib/python2.7/dist-packages/cinder/volume/drivers/hedvig/":
             ensure => directory,
     }

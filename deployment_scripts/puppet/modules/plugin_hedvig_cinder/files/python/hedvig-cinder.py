@@ -34,6 +34,7 @@ from cinder.db.sqlalchemy import api
 from cinder.i18n import _, _LE, _LI, _LW
 from cinder.volume import driver
 from cinder.volume import volume_types
+from cinder.volume import qos_specs
 
 from oslo.config import cfg
 from oslo_concurrency import processutils
@@ -88,8 +89,8 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
                             "storage_protocol" : "ISCSI",
                             "total_capacity_gb": total_capacity,
                             "free_capacity_gb": free_capacity,
-                            "reserverd_percentage": 0,
-                            "QoS_support": False}
+                            "reserved_percentage": 0,
+                            "QoS_support": True}
         return self.group_stats
 
     def hedvigGetVolumeDetails(self, volume):
@@ -118,7 +119,7 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
         name, description, size = self.hedvigGetVolumeDetails(volume)
         volumeTypeId = volume["volume_type_id"]
         volumeType = None
-        try:
+	try:
             LOG.debug("Retrieving volume type details for id: %s", volumeTypeId)
             volumeType = api.volume_type_get(self.context_, volumeTypeId)
             LOG.debug("Volume type is: %s", volumeType)
@@ -446,12 +447,21 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
         This is the same as cloning.
         """
         name, description, size = self.hedvigGetVolumeDetails(volume)
-        snapshotname = snapshot['display_name']
+        snapshotName = snapshot['display_name']
+        volumeTypeId = volume["volume_type_id"]
+        volumeType = None
         try:
-            LOG.debug("Creating volume from snapshot. snapshotName: %s, name: %s, description: %s, size: %s", snapshotname, name, description, size)
-            self.hedvigCloneSnapshot(snapshotname, name, description, size)
+            LOG.debug("Retrieving volume type details for id: %s", volumeTypeId)
+            volumeType = api.volume_type_get(self.context_, volumeTypeId)
+            LOG.debug("Volume type is: %s", volumeType)
         except Exception as e:
-            LOG.error(_LE('Failed to create volume from snapshot. snapshotName: %(snapshotName)s, name: %(name)s, description: %(description)s, size: %(size)s'), {'snapshotName': snapshotName, 'name': name, 'description': description, 'size': size})
+            LOG.error(_LE('Failed to retrieve volume type details for id: %s'), volumeTypeId)
+            raise exception.HedvigDriverException()
+	try:
+            LOG.info(_LI('Creating volume from snapshot. snapshotName: %s, name: %s, description: %s, size: %s'), snapshotName, name, description, size)
+	    self.hedvigCloneSnapshot(snapshotName, name, description, size, volumeType)
+        except Exception as e:
+            # LOG.exception(_LE('Failed to create volume from snapshot. snapshotName: %(snapshotName)s, name: %(name)s, description: %(description)s, size: %(size)s'), {'snapshotName': snapshotName, 'name': name, 'description': description, 'size': size})
             raise exception.HedvigDriverException()
 
     def check_for_export(self, context, volume_id):
@@ -505,38 +515,44 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
         vDiskInfo.isClone = False
         vDiskInfo.consistency = hc.Consistency.STRONG
         if "extra_specs" in volumeType:
-            key = volumeType["extra_specs"]
-            if "qos:dedup_enable" in key:
-                entry = key["qos:dedup_enable"]
-                val = HedvigConfig.parseAndGetBooleanEntry(entry)
-                if val != None:
-                    vDiskInfo.dedup = val
-            if "qos:compress_enable" in key:
-                entry = key["qos:compress_enable"]
-                val = HedvigConfig.parseAndGetBooleanEntry(entry)
-                if val != None:
-                    vDiskInfo.compressed = val
-            if "qos:cache_enable" in key:
-                entry = key["qos:cache_enable"]
-                val = HedvigConfig.parseAndGetBooleanEntry(entry)
-                if val != None:
-                    vDiskInfo.cacheEnable = val
-            if "qos:replication_factor" in key:
-                val = key["qos:replication_factor"]
-                val = int(val)
-                if val > 0:
-                    vDiskInfo.replicationFactor = val
-            if "qos:replication_policy" in key:
-                entry = key["qos:replication_policy"]
-                val = HedvigConfig.parseAndGetReplicationPolicy(entry)
-                if val != None:
-                    vDiskInfo.replicationPolicy = val
-            if "qos:disk_residence" in key:
-                entry = key["qos:disk_residence"]
-                val = HedvigConfig.parseAndGetDiskResidence(entry)
-                if val != None:
-                    vDiskInfo.residence = val
-        hedvigCreateVirtualDiskOp = HCreateVirtualDiskOpCb(vDiskInfo)
+	    qos = {}
+	    qos_specs_id = volumeType.get('qos_specs_id')
+            specs = volumeType.get('extra_specs')
+	    if qos_specs_id is not None:
+            	kvs = qos_specs.get_qos_specs(self.context_, qos_specs_id)['specs']	
+	    	for key, value in kvs.items():
+		    if "dedup_enable" in key:
+		        val = HedvigConfig.parseAndGetBooleanEntry(value)
+		        if val != None:
+                    	    vDiskInfo.dedup = val
+	    	    if "compressed_enable" in key:
+                        val = HedvigConfig.parseAndGetBooleanEntry(value)
+                        if val != None:
+                            vDiskInfo.compressed = True
+	    	    if "cache_enable" in key:
+                        val = HedvigConfig.parseAndGetBooleanEntry(value)
+                        if val != None:
+                            vDiskInfo.cacheEnable = val
+		    if "replication_factor" in key:
+                        val = int(value)
+                        if val > 0:
+                            vDiskInfo.replicationFactor = val
+		    if "replication_policy" in key:
+                        val = HedvigConfig.parseAndGetReplicationPolicy(value)
+                        if val != None:
+                            vDiskInfo.replicationPolicy = val
+		    if "disk_residence" in key:
+                        val = HedvigConfig.parseAndGetDiskResidence(value)
+                        if val != None:
+                            vDiskInfo.residence = val
+        	    if "replication_policy_info" in key:
+			val = value.split(',')
+			if len(val) != 0:
+			    vDiskInfo.replicationPolicyInfo = hc.ReplicationPolicyInfo()
+			    vDiskInfo.replicationPolicyInfo.dataCenterNames = hc.buffer_vector()
+			    for dataCenter in val:
+				vDiskInfo.replicationPolicyInfo.dataCenterNames.append(str(dataCenter))
+	hedvigCreateVirtualDiskOp = HCreateVirtualDiskOpCb(vDiskInfo)
         hedvigCreateVirtualDiskOp.createVirtualDisk()
 
     def hedvigDeleteVirtualDisk(self, name):
@@ -544,32 +560,32 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
         hedvigDeleteVirtualDiskOp = HDeleteVirtualDiskOpCb(name)
         hedvigDeleteVirtualDiskOp.deleteVirtualDisk()
 
-    def hedvigCloneSnapshot(self, snapshotname, name, description, size):
-        LOG.debug("Cloning a snapshot. snapshotName: %s, name: %s, description: %s, size: %s", snapshotname, name, description, size)
+    def hedvigCloneSnapshot(self, snapshotName, name, description, size, volumeType):
+        LOG.debug("Cloning a snapshot. snapshotName: %s, name: %s, description: %s, size: %s", snapshotName, name, description, size)
         LOG.info(_LI('Cloning a snapshot. snapshotName: %(snapshotName)s, name: %(name)s, description: %(description)s, size: %(size)s'), {'snapshotName': snapshotName, 'name': name, 'description': description, 'size': size})
-        vDiskInfo = hc.VDiskInfo()
+	vDiskInfo = hc.VDiskInfo()
         cloneInfo = hc.CloneInfo()
-        baseDisk = snapshotname.split("$")[0]
-        baseVersion = snapshotname.split("$")[2]
-        hedvigDescribeVirtualDiskOp = HDescribeVirtualDiskOpCb(vDiskName)
+        baseDisk = snapshotName.split("$")[0]
+        baseVersion = snapshotName.split("$")[2]
+	hedvigDescribeVirtualDiskOp = HDescribeVirtualDiskOpCb(baseDisk)
         parentVDiskInfo = hedvigDescribeVirtualDiskOp.describeVirtualDisk()
-        vDiskInfo.vDiskName = name
-        cloneInfo.typeOfClone = TypeOfClone.Shallow
+        vDiskInfo.vDiskName = str(name)
+        cloneInfo.typeOfClone = hc.TypeOfClone.Shallow
         vDiskInfo.clusteredfilesystem = parentVDiskInfo.clusteredfilesystem
         vDiskInfo.blockSize = parentVDiskInfo.blockSize
         vDiskInfo.exportedBlockSize = parentVDiskInfo.exportedBlockSize
-        if parentVDiskInfo.size > size:
+	if parentVDiskInfo.size > size:
             LOG.error(_LE('Failed to clone snapshot. Size of the clone: %(cloneSize)s is less than the parent virtual disk size: %(parentSize)s'), {'cloneSize': size, 'parentSize': parentVDiskInfo.size})
             raise Exception("Specified size: %s is less than parent virtual disk size: %s" % (size, parentVDiskInfo.size))
         vDiskInfo.size = size
         vDiskInfo.createdBy = parentVDiskInfo.createdBy
-        vDiskInfo.description = description
+        vDiskInfo.description = str(description)
         vDiskInfo.residence = parentVDiskInfo.residence
         vDiskInfo.replicationFactor = parentVDiskInfo.replicationFactor
         vDiskInfo.replicationPolicy = parentVDiskInfo.replicationPolicy
-        cloneInfo.snapshot = snapshotname
+        cloneInfo.snapshot = str(snapshotName)
         cloneInfo.baseVersion = int(baseVersion)
-        cloneInfo.baseDisk = baseDisk
+        cloneInfo.baseDisk = str(baseDisk)
         vDiskInfo.cloneInfo = cloneInfo
         vDiskInfo.isClone = True
         vDiskInfo.scsisn = 0
@@ -578,7 +594,45 @@ class HedvigISCSIDriver(driver.ISCSIDriver):
         vDiskInfo.cloudProvider = parentVDiskInfo.cloudProvider
         vDiskInfo.cloudEnabled = parentVDiskInfo.cloudEnabled
         vDiskInfo.dedup = parentVDiskInfo.dedup
-        vDiskInfo.consistency = Consistency.STRONG
-        hedvigCreateVirtualDiskOp = HCreateVirtualDiskOpCb(vDiskInfo)
+        vDiskInfo.consistency = hc.Consistency.STRONG
+        if "extra_specs" in volumeType:
+            qos = {}
+            qos_specs_id = volumeType.get('qos_specs_id')
+            specs = volumeType.get('extra_specs')  
+            if qos_specs_id is not None:
+                kvs = qos_specs.get_qos_specs(self.context_, qos_specs_id)['specs']
+                for key, value in kvs.items():
+                    if "dedup_enable" in key:
+                        val = HedvigConfig.parseAndGetBooleanEntry(value)
+                        if val != None:
+                            vDiskInfo.dedup = val
+                    if "compressed_enable" in key:
+                        val = HedvigConfig.parseAndGetBooleanEntry(value)
+                        if val != None:
+                            vDiskInfo.compressed = True
+                    if "cache_enable" in key:
+                        val = HedvigConfig.parseAndGetBooleanEntry(value)
+                        if val != None:
+                            vDiskInfo.cacheEnable = val
+                    if "replication_factor" in key:
+                        val = int(value)
+                        if val > 0:
+                            vDiskInfo.replicationFactor = val
+                    if "replication_policy" in key:
+                        val = HedvigConfig.parseAndGetReplicationPolicy(value)
+                        if val != None:
+                            vDiskInfo.replicationPolicy = val
+                    if "disk_residence" in key:
+                        val = HedvigConfig.parseAndGetDiskResidence(value)
+                        if val != None:
+                            vDiskInfo.residence = val
+                    if "replication_policy_info" in key:
+                        val = value.split(',')
+                        if len(val) != 0:
+                            vDiskInfo.replicationPolicyInfo = hc.ReplicationPolicyInfo()
+                            vDiskInfo.replicationPolicyInfo.dataCenterNames = hc.buffer_vector()
+                            for dataCenter in val:
+                                vDiskInfo.replicationPolicyInfo.dataCenterNames.append(str(dataCenter))
+	hedvigCreateVirtualDiskOp = HCreateVirtualDiskOpCb(vDiskInfo)
         hedvigCreateVirtualDiskOp.createVirtualDisk()
 

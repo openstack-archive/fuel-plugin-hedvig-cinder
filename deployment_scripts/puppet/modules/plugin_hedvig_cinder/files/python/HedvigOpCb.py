@@ -279,10 +279,9 @@ class HCreateVirtualDiskOpCb(HedvigOpCb):
        
     def __init__(self, vDiskInfo):
         HedvigOpCb.__init__(self)
-        LOG.debug("Creating virtual disk: %s", vDiskInfo.vDiskName)
+        LOG.info("Creating virtual disk: %s", vDiskInfo.vDiskName)
 	self.op_ = hc.HCreateVirtualDiskOp()
         self.op_.vDiskInfo_ = hc.VDiskInfo()
-	self.op_.vDiskInfo_.dedup = vDiskInfo.dedup
 	self.op_.vDiskInfo_.vDiskName = str(vDiskInfo.vDiskName)
 	self.op_.vDiskInfo_.createdBy = vDiskInfo.createdBy
 	self.op_.vDiskInfo_.size = vDiskInfo.size
@@ -290,10 +289,10 @@ class HCreateVirtualDiskOpCb(HedvigOpCb):
 	self.op_.vDiskInfo_.blockSize = vDiskInfo.blockSize
 	self.op_.vDiskInfo_.exportedBlockSize = vDiskInfo.exportedBlockSize
 	self.op_.vDiskInfo_.isClone = vDiskInfo.isClone
+	self.op_.vDiskInfo_.dedup = vDiskInfo.dedup
 	self.op_.vDiskInfo_.cloudEnabled = vDiskInfo.cloudEnabled
 	self.op_.vDiskInfo_.dedupBuckets = str(vDiskInfo.dedupBuckets)
 	self.op_.vDiskInfo_.masterVDiskName = str(vDiskInfo.masterVDiskName)
-	self.op_.vDiskInfo_.dedup = vDiskInfo.dedup
     	self.op_.vDiskInfo_.compressed = vDiskInfo.compressed
 	self.op_.vDiskInfo_.immutable = vDiskInfo.immutable
     	self.op_.vDiskInfo_.cacheEnable = vDiskInfo.cacheEnable
@@ -301,11 +300,20 @@ class HCreateVirtualDiskOpCb(HedvigOpCb):
     	self.op_.vDiskInfo_.clusteredfilesystem = vDiskInfo.clusteredfilesystem
 	self.op_.vDiskInfo_.description = str(vDiskInfo.description)
     	self.op_.vDiskInfo_.mntLocation = str(vDiskInfo.mntLocation)
-    	self.op_.vDiskInfo_.residence = vDiskInfo.residence
+	self.op_.vDiskInfo_.residence = vDiskInfo.residence
     	self.op_.vDiskInfo_.diskType = vDiskInfo.diskType
     	self.op_.vDiskInfo_.cloudProvider = vDiskInfo.cloudProvider
 	self.op_.vDiskInfo_.replicationPolicy = vDiskInfo.replicationPolicy
-   
+    	self.op_.vDiskInfo_.replicationPolicyInfo = hc.ReplicationPolicyInfo()
+	self.op_.vDiskInfo_.replicationPolicyInfo.dataCenterNames = hc.buffer_vector()
+	for dataCenter in vDiskInfo.replicationPolicyInfo.dataCenterNames:
+		self.op_.vDiskInfo_.replicationPolicyInfo.dataCenterNames.append(str(dataCenter))
+	self.op_.vDiskInfo_.cloneInfo = hc.CloneInfo()
+    	self.op_.vDiskInfo_.cloneInfo.baseDisk = str(vDiskInfo.cloneInfo.baseDisk)
+    	self.op_.vDiskInfo_.cloneInfo.snapshot = str(vDiskInfo.cloneInfo.snapshot)
+    	self.op_.vDiskInfo_.cloneInfo.baseVersion = vDiskInfo.cloneInfo.baseVersion
+	self.op_.vDiskInfo_.cloneInfo.typeOfClone = vDiskInfo.cloneInfo.typeOfClone
+
     def createVirtualDisk(self):
         self.pyCallback_.createVirtualDisk(self.op_)
         self.waitForResult(self.__class__.__name__)
